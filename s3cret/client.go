@@ -5,8 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -14,9 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"golang.org/x/crypto/nacl/secretbox"
 )
-
-const chunkSize uint64 = 16384
-const minimumUploadPartSize uint64 = 5.243e+6
 
 // Client ...
 type Client struct {
@@ -45,7 +40,7 @@ func (c *Client) SendToS3(localPath, s3Bucket, s3Key string) error {
 	secretKey := NewSecretKey()
 	secretKey.Save()
 
-	chunks := chunkLocalFile(localPath)
+	chunks := chunksFromFile(localPath)
 	encryptedChunkBytes := c.encryptChunks(chunks)
 
 	multipartUpload, err := newMultipartUpload(s3Bucket, s3Key, c.s3Client)
@@ -56,7 +51,6 @@ func (c *Client) SendToS3(localPath, s3Bucket, s3Key string) error {
 	parts := c.createParts(encryptedChunkBytes, multipartUpload)
 
 	completedParts := multipartUpload.uploadParts(parts)
-
 	if completedParts == nil {
 		multipartUpload.abort()
 		return errors.New("had to abort multipart upload")
@@ -66,56 +60,19 @@ func (c *Client) SendToS3(localPath, s3Bucket, s3Key string) error {
 	return nil
 }
 
-func chunkLocalFile(path string) <-chan *Chunk {
-	f, err := os.Open(path)
-	if err != nil {
-		log.Fatalf("unable to open file: %v\n", err.Error())
-	}
-
-	chunks := make(chan *Chunk, 1)
-
-	go func() {
-		defer close(chunks)
-
-		var i int64 = 0
-		for {
-			chunkData := make([]byte, chunkSize)
-			_, err := f.Read(chunkData)
-			fmt.Printf("creating chunk w/ index %v\n", i)
-
-			chunk := &Chunk{
-				index: i,
-				data:  chunkData,
-			}
-
-			chunks <- chunk
-
-			if err != nil {
-				if err != io.EOF {
-					_, _ = fmt.Fprintf(os.Stderr, "error reading file: %v\n", err.Error())
-				}
-				return
-			}
-
-			i++
-		}
-	}()
-	return chunks
-}
-
-func (c *Client) encryptChunks(chunks <-chan *Chunk) <-chan []byte {
+func (c *Client) encryptChunks(chunks <-chan *chunk) <-chan []byte {
 	encryptedChunks := make(chan []byte, 1)
 
 	go func() {
 		defer close(encryptedChunks)
 		for {
-			chunk, isOpen := <-chunks
+			chk, isOpen := <-chunks
 			if !isOpen {
 				fmt.Println("finished receiving chunks for encryption")
 				return
 			}
 
-			encryptedChunk, err := chunk.encrypt(c.secretKey.key)
+			encryptedChunk, err := chk.encrypt(c.secretKey.key)
 			if err != nil {
 				_, _ = fmt.Fprintf(os.Stderr, "unable to encrypt chunk: %v\n", err.Error())
 				return
@@ -146,9 +103,9 @@ func (c *Client) createParts(
 		hasLastChunkBeenProcessed := false
 
 		for hasLastChunkBeenProcessed == false {
-			chunk, isOpen := <-byteChunks
+			chk, isOpen := <-byteChunks
 			if isOpen {
-				data = append(data, chunk)
+				data = append(data, chk)
 			} else {
 				hasLastChunkBeenProcessed = true
 			}

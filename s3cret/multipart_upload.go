@@ -8,6 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 )
 
+const minimumUploadPartSize uint64 = 5.243e+6
+
 type multipartUpload struct {
 	bucket   string
 	key      string

@@ -4,16 +4,60 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"log"
+	"os"
 
 	"golang.org/x/crypto/nacl/secretbox"
 )
 
-type Chunk struct {
+const chunkSize uint64 = 16384
+
+type chunk struct {
 	index int64
 	data  []byte
 }
 
-func (c *Chunk) encrypt(secretKey [32]byte) (*EncryptedChunk, error) {
+func newChunk(data []byte, index int64) *chunk {
+	return &chunk{
+		index,
+		data,
+	}
+}
+
+func chunksFromFile(path string) <-chan *chunk {
+	f, err := os.Open(path)
+	if err != nil {
+		log.Fatalf("unable to open file: %v\n", err.Error())
+	}
+
+	chunks := make(chan *chunk, 1)
+
+	go func() {
+		defer close(chunks)
+
+		var i int64 = 0
+		for {
+			data := make([]byte, chunkSize)
+			_, err := f.Read(data)
+			fmt.Printf("creating chunk w/ index %v\n", i)
+
+			c := newChunk(data, i)
+			chunks <- c
+
+			if err != nil {
+				if err != io.EOF {
+					_, _ = fmt.Fprintf(os.Stderr, "error reading file: %v\n", err.Error())
+				}
+				return
+			}
+
+			i++
+		}
+	}()
+	return chunks
+}
+
+func (c *chunk) encrypt(secretKey [32]byte) (*EncryptedChunk, error) {
 	var nonce [24]byte
 	if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
 		return nil, err
