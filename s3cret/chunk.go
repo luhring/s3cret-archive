@@ -10,6 +10,8 @@ import (
 	"golang.org/x/crypto/nacl/secretbox"
 )
 
+const bufferSizeForFileChunks = 100000
+
 const chunkSize uint64 = 16384
 
 type chunk struct {
@@ -30,7 +32,7 @@ func chunksFromFile(path string) <-chan *chunk {
 		log.Fatalf("unable to open file: %v\n", err.Error())
 	}
 
-	chunks := make(chan *chunk, 1)
+	chunks := make(chan *chunk, bufferSizeForFileChunks)
 
 	go func() {
 		defer close(chunks)
